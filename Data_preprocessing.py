@@ -33,3 +33,16 @@ def get_residuals(adata, design: str):
     adata.layers["residuals"] = residuals_df
 
     return adata
+
+
+def random_boxplot(df,n):
+  """ This function takes dataframe as an input and an integer with number of columns to plot"""
+    import random
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    plt.subplots(figsize=(20,5))
+    random.seed(0)
+    columns=[random.randint(0,df.shape[1]) for i in range(n)]
+    df.iloc[:,columns].boxplot(grid=False, showfliers=False)
+    plt.xticks(rotation=90)
+    plt.show()
