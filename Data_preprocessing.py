@@ -12,12 +12,13 @@ def random_boxplot(df,n):
 
 
 def adata_subsample(adata, column:str, target_obs:int):
-"""This function takes adata object, column name with class to subsample based on
-and number of target observations per class"""
+#"""This function takes adata object, column name with class to subsample based on
+#and number of target observations per class"""
     import scanpy as sc
     import anndata as ad
     adatas = [adata[adata.obs[column]==i] for i in adata.obs[column].unique()]
     for dat in adatas:
-        sc.pp.sample(dat, n=target_obs)
+        if dat.shape[0]>target_obs:
+            sc.pp.sample(dat, n=target_obs)
     adata_downsampled = ad.concat(adatas)
     return adata_downsampled
