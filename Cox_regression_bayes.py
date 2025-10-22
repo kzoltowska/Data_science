@@ -5,6 +5,12 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.feature_selection import f_classif
+from sklearn.feature_selection import RFECV
+from sklearn.svm import LinearSVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import SequentialFeatureSelector, SelectFromModel, SelectKBest
 
 # Set seeds and style
 RANDOM_SEED = 8927
@@ -89,35 +95,36 @@ def make_exposure_matrix(time, event, breaks):
 
 def cox_bayesian_model(df, n_intervals=20, method=["Lasso", "Ridge", "Horseshoe"],ridge_sigma=1.0,
     lasso_b=0.5, # b for Laplace prior (lasso)
-    horseshoe_tau_scale=5.0):    
+    horseshoe_tau_scale=5.0, plot_dist_sample=False):    
 
     '''Function to run cox proportional hazard model but using bayesian stats, df contains features, followed by 2 columns event and time, event is a 0,1 column'''
     n_patients = df.shape[0]
     patients = np.arange(n_patients)
     breaks = np.linspace(0, df["time"].max(), n_intervals + 1)
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.hist(
-        df[df.event == 0].time.values,
-        bins=breaks,
-        lw=0,
-        color="navy",
-        alpha=0.5,
-        label="CTRL",
-    )
-    ax.hist(
-        df[df.event == 1].time.values,
-        bins=breaks,
-        lw=0,
-        color="green",
-        alpha=0.5,
-        label="PD",
-    )
-    ax.set_xlim(0, breaks[-1])
-    ax.set_xlabel("Years from sample collection")
-    ax.set_yticks(range(15))
-    ax.set_ylabel("Number of observations")
-    ax.legend()
-    plt.show()
+    if plot_dist_sample==True:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.hist(
+            df[df.event == 0].time.values,
+            bins=breaks,
+            lw=0,
+            color="navy",
+            alpha=0.5,
+            label="CTRL",
+        )
+        ax.hist(
+            df[df.event == 1].time.values,
+            bins=breaks,
+            lw=0,
+            color="green",
+            alpha=0.5,
+            label="PD",
+        )
+        ax.set_xlim(0, breaks[-1])
+        ax.set_xlabel("Years from sample collection")
+        ax.set_yticks(range(15))
+        ax.set_ylabel("Number of observations")
+        ax.legend()
+        plt.show()
 
         # -----------------------------------------------------------
     # 1. PREPARE DATA
@@ -247,8 +254,8 @@ def cox_bayesian_model(df, n_intervals=20, method=["Lasso", "Ridge", "Horseshoe"
     significant_features = beta_summary[beta_summary["significant"]]
     print("Significant (credible) predictors:\n")
     print(significant_features)
-
-    plt.figure(figsize=(8, 30))
+    beta_summary=beta_summary.sort_values("mean",key=lambda x: x.abs(), ascending=False).head(20)
+    plt.figure(figsize=(8, 10))
     plt.errorbar(
         beta_summary["mean"],
         beta_summary.index,
@@ -264,3 +271,35 @@ def cox_bayesian_model(df, n_intervals=20, method=["Lasso", "Ridge", "Horseshoe"
     plt.ylabel("Feature")
     plt.title("Posterior estimates of covariate effects (with 94% HDI)")
     plt.show()
+
+
+def feature_selection(X, y, method="from_model", k=50):
+    """
+    Perform feature selection using one of three methods:
+    - 'from_model': LinearSVC (L1) feature selection
+    - 'select_k_best': ANOVA F-test
+    - 'sfs': Sequential Feature Selector with RandomForestClassifier
+    """
+    if method == "from_model":
+        lsvc = LinearSVC(C=1, penalty="l1", dual=False, max_iter=5000).fit(X, y) #May need to adjust C for this model, low Cs result in zero features
+        model = SelectFromModel(lsvc, prefit=True)
+        selected_features = X.columns[model.get_support()]
+        X_new = pd.DataFrame(model.transform(X), columns=selected_features, index=X.index)
+
+    elif method == "select_k_best":
+        skb = SelectKBest(f_classif, k=min(k, X.shape[1]))
+        X_new_array = skb.fit_transform(X, y)
+        selected_features = X.columns[skb.get_support()]
+        X_new = pd.DataFrame(X_new_array, columns=selected_features, index=X.index)
+
+    elif method == "sfs":
+        rf = RandomForestClassifier(random_state=42, n_jobs=-1)
+        sfs = SequentialFeatureSelector(rf, n_features_to_select=min(k, X.shape[1]), n_jobs=-1)
+        sfs.fit(X, y)
+        selected_features = X.columns[sfs.get_support()]
+        X_new = pd.DataFrame(sfs.transform(X), columns=selected_features, index=X.index)
+
+    else:
+        raise ValueError(f"Invalid method '{method}'. Choose from ['from_model', 'select_k_best', 'sfs'].")
+
+    return X_new
