@@ -255,6 +255,7 @@ def cox_bayesian_model(df, n_intervals=20, method=["Lasso", "Ridge", "Horseshoe"
     print("Significant (credible) predictors:\n")
     print(significant_features)
     beta_summary=beta_summary.sort_values("mean",key=lambda x: x.abs(), ascending=False).head(20)
+    beta_summary=beta_summary.sort_values("abs_mean")
     plt.figure(figsize=(8, 10))
     plt.errorbar(
         beta_summary["mean"],
@@ -270,6 +271,7 @@ def cox_bayesian_model(df, n_intervals=20, method=["Lasso", "Ridge", "Horseshoe"
     plt.xlabel("Posterior mean of beta (effect on log hazard)")
     plt.ylabel("Feature")
     plt.title("Posterior estimates of covariate effects (with 94% HDI)")
+    plt.xlim(beta_summary["mean"].min()-beta_summary["sd"].max() - 1.5, beta_summary["mean"].max()+beta_summary["sd"].max() + 1.5)
     plt.tight_layout()
     plt.show()
 
