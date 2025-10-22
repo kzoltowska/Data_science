@@ -270,6 +270,7 @@ def cox_bayesian_model(df, n_intervals=20, method=["Lasso", "Ridge", "Horseshoe"
     plt.xlabel("Posterior mean of beta (effect on log hazard)")
     plt.ylabel("Feature")
     plt.title("Posterior estimates of covariate effects (with 94% HDI)")
+    plt.tight_layout()
     plt.show()
 
 
