@@ -93,7 +93,7 @@ def make_exposure_matrix(time, event, breaks):
     return exposure, conv
 
 
-def cox_bayesian_model(df, n_intervals=20, method=["Lasso", "Ridge", "Horseshoe"],ridge_sigma=1.0,
+def cox_bayesian_model(df, n_intervals=20, method="Ridge",ridge_sigma=1.0,
     lasso_b=0.5, # b for Laplace prior (lasso)
     horseshoe_tau_scale=5.0, plot_dist_sample=False):    
 
