@@ -1,3 +1,4 @@
+
 # Function for plotting model coefficients for different alphas
 def plot_coefficients(coefs, n_highlight):
     _, ax = plt.subplots(figsize=(9, 6))
@@ -58,9 +59,12 @@ def cox_regression_elastic_net_cv(Xt, y, n_splits=3, l1_ratio=0.87, n_highlight=
     # Get the estimated alphas from the model
     estimated_alphas = coxnet_pipe.named_steps["coxnetsurvivalanalysis"].alphas_
 
-    # Perform grid search with a set of alphas from the estimatuibs
-    gcv = GridSearchCV(
-    make_pipeline(StandardScaler(), CoxnetSurvivalAnalysis(l1_ratio=l1_ratio)),
+    # Perform grid search with a set of alphas
+    if scale==True:
+        estimator=make_pipeline(StandardScaler(), CoxnetSurvivalAnalysis(l1_ratio=l1_ratio))
+    else:
+        estimator=make_pipeline(CoxnetSurvivalAnalysis(l1_ratio=l1_ratio))
+    gcv = GridSearchCV(estimator,
     param_grid={"coxnetsurvivalanalysis__alphas": [[v] for v in map(float, estimated_alphas)]},
     cv=cv,
     n_jobs=-1).fit(Xt, y)
