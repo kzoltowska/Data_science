@@ -1,4 +1,3 @@
-
 # Function for plotting model coefficients for different alphas
 def plot_coefficients(coefs, n_highlight):
     _, ax = plt.subplots(figsize=(9, 6))
@@ -18,7 +17,7 @@ def plot_coefficients(coefs, n_highlight):
     ax.set_xlabel("alpha")
     ax.set_ylabel("coefficient")
 
-def cox_regression_elastic_net_cv(Xt, y, n_splits=3, l1_ratio=0.87, n_highlight=5, alpha_min_ratio=0.1):
+def cox_regression_elastic_net_cv(Xt, y, n_splits=3, l1_ratio=0.87, n_highlight=5, alpha_min_ratio=0.1, scale=True):
     """
     Perform cross-validated Cox Elastic Net regression with optimal alpha selection.
     
@@ -34,14 +33,19 @@ def cox_regression_elastic_net_cv(Xt, y, n_splits=3, l1_ratio=0.87, n_highlight=
         Elastic net mixing parameter (default: 0.9)
     n_highlight : int
         Number of top features to highlight in plot
+
+    scale : boolean - if scale True then standard scaler is applied
         
     """
     # Set up cross-validation
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
     # create a pipeline with a scaler and a coxnet regression model
-    coxnet_pipe = make_pipeline(StandardScaler(), CoxnetSurvivalAnalysis(l1_ratio=l1_ratio, alpha_min_ratio=alpha_min_ratio))
-    # fit the model on the data
+    if scale==True:
+        coxnet_pipe = make_pipeline(StandardScaler(), CoxnetSurvivalAnalysis(l1_ratio=l1_ratio, alpha_min_ratio=alpha_min_ratio))
+    else:
+        coxnet_pipe = make_pipeline(CoxnetSurvivalAnalysis(l1_ratio=l1_ratio, alpha_min_ratio=alpha_min_ratio))
+        # fit the model on the data
     coxnet_pipe.fit(Xt, y)
 
     # Create a dataframe with coeficients and different alphas
