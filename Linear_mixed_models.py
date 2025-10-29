@@ -1,9 +1,26 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from statsmodels.regression.mixed_linear_model import MixedLM
+from statsmodels.formula.api import mixedlm
+import scipy.stats as stats
+
 # Set style
 sns.set_style("whitegrid")
 plt.rcParams['figure.figsize'] = (12, 8)
 
 
 def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=None):
+    """
+    This function fits mixed linear models.
+    It requires the following arguments:
+    df - the dataframe with the data
+    visit_col - the column name containing the month/year of the visit
+    patient_col - the column name with patient_id
+    variable_col -  the column name with the dependent variable
+    other_covariates - list of covariate names - in the current set-up first is categorical i.e. gender and second continous i.e. age_at_visit
+    """
 
     print("\n" + "="*70)
     print(f"PERFORMING ANALYSIS OF {variable_col.upper()}")
@@ -30,7 +47,9 @@ def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=No
     print("TRAJECTORIES")
     print("="*70+"\n")
     # Visualize trajectories
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(16, 10))
+    axes=axes.flatten()
     
     # Individual trajectories
     for group in df[group_col].unique():
@@ -55,6 +74,23 @@ def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=No
     axes[1].set_ylabel(variable_col)
     axes[1].set_title(f'Mean Trajectories by Group (±SEM) for {variable_col}')
     axes[1].legend()
+
+    cov_1=other_covariates[0]
+    if cov_1 is not None:
+        for group in df[cov_1].unique():
+            group_summary = df[df[cov_1] == group].groupby(visit_col)[variable_col].agg(['mean', 'sem'])
+            axes[2].errorbar(group_summary.index, group_summary['mean'], 
+                            yerr=group_summary['sem'], marker='o', label=group, capsize=5)
+        
+        axes[2].set_xlabel('Visit')
+        axes[2].set_ylabel(variable_col)
+        axes[2].set_title(f'Mean Trajectories by {cov_1} (±SEM) for {variable_col}')
+        axes[2].legend()
+
+    cov_2=other_covariates[1]
+    if cov_2 is not None:
+        sns.scatterplot(df, x=cov_2, y=variable_col, ax=axes[3])
+        axes[3].set_title(f'Relationship between {cov_2} and {variable_col}')
     
     plt.tight_layout()
     plt.show()
@@ -233,3 +269,5 @@ def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=No
         print("\n" + "="*70)
         print("ANALYSIS COMPLETE")
     
+
+   
