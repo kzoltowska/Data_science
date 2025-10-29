@@ -42,7 +42,7 @@ def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=No
     
     axes[0].set_xlabel('Visit')
     axes[0].set_ylabel(variable_col)
-    axes[0].set_title('Individual Patient Trajectories')
+    axes[0].set_title(f'Individual Patient Trajectories for {variable_col}')
     axes[0].legend(df[group_col].unique())
     
     # Mean trajectories with error bars
@@ -53,7 +53,7 @@ def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=No
     
     axes[1].set_xlabel('Visit')
     axes[1].set_ylabel(variable_col)
-    axes[1].set_title('Mean Trajectories by Group (±SEM)')
+    axes[1].set_title(f'Mean Trajectories by Group (±SEM) for {variable_col}')
     axes[1].legend()
     
     plt.tight_layout()
@@ -73,113 +73,163 @@ def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=No
         covariate_str = " + " + " + ".join(other_covariates)
         print(f"Including covariates: {', '.join(other_covariates)}\n")
     formula=f"{variable_col} ~ {group_col} + {visit_col} + {group_col}:{visit_col}{covariate_str}"
-    
-    model1 = mixedlm(f"{variable_col} ~ {group_col} + {visit_col} + {group_col}:{visit_col}{covariate_str}", 
+
+    try:
+        model1 = mixedlm(f"{variable_col} ~ {group_col} + {visit_col} + {group_col}:{visit_col}{covariate_str}", 
                      df, 
                      groups=df[patient_col])
-    result1 = model1.fit(method='lbfgs', maxiter=1000, reml=False)
-    
-    print("\nModel 1: Random Intercept Model")
-    print("-" * 70)
-    print("MODEL FORMULA")
-    print(formula)
-    print(result1.summary())
+        result1 = model1.fit(method='lbfgs', maxiter=1000, reml=False)
+        
+        print("\nModel 1: Random Intercept Model")
+        print("-" * 70)
+        print("MODEL FORMULA")
+        print(formula)
+        print(result1.summary())
+
+    except np.linalg.LinAlgError:
+        print("Singular matrix error for model 1.")
+        result1=None
     
     # Model 2: Random intercept and random slope
     # This allows each patient to have their own trajectory slope
     
-    
-    model2 = mixedlm(f"{variable_col} ~ {group_col} + {visit_col} + {group_col}:{visit_col}{covariate_str}", 
-                     df, 
-                     groups=df[patient_col],
-                     re_formula=f"~{visit_col}")
-    result2 = model2.fit(method='lbfgs', maxiter=1000, reml=False)
-    
-    print("\n" + "="*70)
-    print("Model 2: Random Intercept + Random Slope Model")
-    print("-" * 70)
-    print("MODEL FORMULA")
-    print(formula)
-    print(result2.summary())
+    try:
+        model2 = mixedlm(f"{variable_col} ~ {group_col} + {visit_col} + {group_col}:{visit_col}{covariate_str}", 
+                         df, 
+                         groups=df[patient_col],
+                         re_formula=f"~{visit_col}")
+        result2 = model2.fit(method='lbfgs', maxiter=1000, reml=False)
+        
+        print("\n" + "="*70)
+        print("Model 2: Random Intercept + Random Slope Model")
+        print("-" * 70)
+        print("MODEL FORMULA")
+        print(formula)
+        print(result2.summary())
+    except np.linalg.LinAlgError:
+        print("Singular matrix error for model 2.")
+        result2=None
     
     # Compare models using AIC/BIC
-    print("\n" + "="*70)
-    print("MODEL COMPARISON")
-    print("="*70)
-    print(f"Model 1 (Random Intercept Only):")
-    print(f"  AIC: {result1.aic:.2f}")
-    print(f"  BIC: {result1.bic:.2f}")
-    print(f"\nModel 2 (Random Intercept + Slope):")
-    print(f"  AIC: {result2.aic:.2f}")
-    print(f"  BIC: {result2.bic:.2f}")
-    print(f"\nLower values indicate better fit. Preferred model: Model {'1' if result1.aic < result2.aic else '2'}")
-    
-    best_result = result2 if result2.aic < result1.aic else result1
-    
-    print("\n" + "="*70)
-    print("KEY FINDINGS (from best model)")
-    print("="*70)
-    
-    # Extract coefficients and p-values
-    params = best_result.params
-    pvalues = best_result.pvalues
-    conf_int = best_result.conf_int()
-    
-    print("\nFixed Effects:")
-    print("-" * 70)
-    for param in params.index:
-        print(f"{param:30s}: β = {params[param]:7.3f}, p = {pvalues[param]:.4f}, "
-              f"95% CI [{conf_int.loc[param, 0]:.3f}, {conf_int.loc[param, 1]:.3f}]")
-    
-    # Interpretation helper
-    print("\n" + "="*70)
-    print("INTERPRETATION GUIDE")
-    print("="*70)
-    print("""
-    1. Intercept: Mean hematology value for CTRL group at visit 0
-    2. group[T.PD/PROD]: Difference from CTRL at baseline
-    3. visit: Change per visit for CTRL group
-    4. group[T.PD/PROD]:visit: Additional change per visit for PD/PROD vs CTRL
-       (i.e., interaction effect - different slopes over time)
-    """)
-    
-    # 6. MODEL DIAGNOSTICS
-    print("\n" + "="*70)
-    print("DIAGNOSTIC PLOTS")
-    print("="*70+"\n")
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    
-    # Residuals vs Fitted
-    fitted = best_result.fittedvalues
-    residuals = best_result.resid
-    
-    axes[0, 0].scatter(fitted, residuals, alpha=0.5)
-    axes[0, 0].axhline(y=0, color='r', linestyle='--')
-    axes[0, 0].set_xlabel('Fitted Values')
-    axes[0, 0].set_ylabel('Residuals')
-    axes[0, 0].set_title('Residuals vs Fitted')
-    
-    # Q-Q plot
-    stats.probplot(residuals, dist="norm", plot=axes[0, 1])
-    axes[0, 1].set_title('Normal Q-Q Plot')
-    
-    # Histogram of residuals
-    axes[1, 0].hist(residuals, bins=30, edgecolor='black')
-    axes[1, 0].set_xlabel('Residuals')
-    axes[1, 0].set_ylabel('Frequency')
-    axes[1, 0].set_title('Distribution of Residuals')
-    
-    # Scale-Location plot
-    axes[1, 1].scatter(fitted, np.sqrt(np.abs(residuals)), alpha=0.5)
-    axes[1, 1].set_xlabel('Fitted Values')
-    axes[1, 1].set_ylabel('√|Residuals|')
-    axes[1, 1].set_title('Scale-Location Plot')
-    
-    plt.tight_layout()
-    plt.show()
-    
-    print("\n" + "="*70)
-    print("ANALYSIS COMPLETE")
-    
+    if result1 is not None and result2 is not None:
+        print(f"Model 1 (Random Intercept Only):")
+        print(f"  AIC: {result1.aic:.2f}")
+        print(f"  BIC: {result1.bic:.2f}")
+        print(f"\nModel 2 (Random Intercept + Slope):")
+        print(f"  AIC: {result2.aic:.2f}")
+        print(f"  BIC: {result2.bic:.2f}")
+        print(f"\nLower values indicate better fit. Preferred model: Model {'1' if result1.aic < result2.aic else '2'}")
+        best_result = result2 if result2.aic < result1.aic else result1
 
-   
+    elif result1 is not None:
+        print("Only Model 1 fitted successfully — using Model 1 for analysis.")
+        best_result = result1
+    
+    elif result2 is not None:
+        print("Only Model 2 fitted successfully — using Model 2 for analysis.")
+        best_result = result2
+    else:
+        print("Both models failed to fit.")
+        best_result = None
+
+    if best_result is None:
+        print("\nExiting function: no valid model could be fit.\n")
+        return
+
+    else:
+        print("\n" + "="*70)
+        print("KEY FINDINGS (from best model)")
+        print("="*70)
+        
+        # Extract coefficients and p-values
+        params = best_result.params
+        pvalues = best_result.pvalues
+        conf_int = best_result.conf_int()
+        
+        print("\nFixed Effects:")
+        print("-" * 70)
+        for param in params.index:
+            print(f"{param:30s}: β = {params[param]:7.3f}, p = {pvalues[param]:.4f}, "
+                  f"95% CI [{conf_int.loc[param, 0]:.3f}, {conf_int.loc[param, 1]:.3f}]")
+        
+        # Interpretation helper
+        print("\n" + "="*70)
+        print("INTERPRETATION GUIDE")
+        print("="*70)
+        print("""
+        1. Intercept: Mean hematology value for CTRL group at visit 0
+        2. group[T.PD/PROD]: Difference from CTRL at baseline
+        3. visit: Change per visit for CTRL group
+        4. group[T.PD/PROD]:visit: Additional change per visit for PD/PROD vs CTRL
+           (i.e., interaction effect - different slopes over time)
+        """)
+        
+        # 6. MODEL DIAGNOSTICS
+        print("\n" + "="*70)
+        print("DIAGNOSTIC PLOTS")
+        print("="*70+"\n")
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        
+        # Residuals vs Fitted
+        fitted = best_result.fittedvalues
+        residuals = best_result.resid
+        
+        axes[0, 0].scatter(fitted, residuals, alpha=0.5)
+        axes[0, 0].axhline(y=0, color='r', linestyle='--')
+        axes[0, 0].set_xlabel('Fitted Values')
+        axes[0, 0].set_ylabel('Residuals')
+        axes[0, 0].set_title('Residuals vs Fitted')
+        
+        # Q-Q plot
+        stats.probplot(residuals, dist="norm", plot=axes[0, 1])
+        axes[0, 1].set_title('Normal Q-Q Plot')
+        
+        # Histogram of residuals
+        axes[1, 0].hist(residuals, bins=30, edgecolor='black')
+        axes[1, 0].set_xlabel('Residuals')
+        axes[1, 0].set_ylabel('Frequency')
+        axes[1, 0].set_title('Distribution of Residuals')
+        
+        # Scale-Location plot
+        axes[1, 1].scatter(fitted, np.sqrt(np.abs(residuals)), alpha=0.5)
+        axes[1, 1].set_xlabel('Fitted Values')
+        axes[1, 1].set_ylabel('√|Residuals|')
+        axes[1, 1].set_title('Scale-Location Plot')
+        
+        plt.tight_layout()
+        plt.show()
+    
+        # 7. SIGNIFICANCE SUMMARY
+        
+        print("\n" + "="*70)
+        print("SIGNIFICANT EFFECTS SUMMARY")
+        print("="*70)
+    
+        alpha = 0.05  # significance threshold
+        significant_params = pvalues[pvalues < alpha]
+    
+        if len(significant_params) == 0:
+            print("No statistically significant effects detected (p ≥ 0.05).")
+        else:
+            for param in significant_params.index:
+                beta = params[param]
+                ci_low, ci_high = conf_int.loc[param]
+                direction = "increase" if beta > 0 else "decrease"
+                
+                print(f"\n• {param}:")
+                print(f"  → Statistically significant (p = {pvalues[param]:.4f})")
+                print(f"  → Effect size (β) = {beta:.3f} [{ci_low:.3f}, {ci_high:.3f}]")
+                print(f"  → Interpretation: A one-unit change in this predictor is associated with "
+                      f"a {direction} in {variable_col}.")
+        
+        # Optional interpretive hint for interactions
+        interaction_terms = [p for p in significant_params.index if ":" in p]
+        if interaction_terms:
+            print("\n---")
+            print("Interaction effects suggest that the relationship between time and outcome "
+                  "differs by group. This typically indicates differing progression slopes "
+                  "across groups.")
+        
+        print("\n" + "="*70)
+        print("ANALYSIS COMPLETE")
+    
