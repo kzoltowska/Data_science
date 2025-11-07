@@ -12,15 +12,6 @@ plt.rcParams['figure.figsize'] = (12, 8)
 
 
 def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=None):
-    """
-    This function fits mixed linear models.
-    It requires the following arguments:
-    df - the dataframe with the data
-    visit_col - the column name containing the month/year of the visit
-    patient_col - the column name with patient_id
-    variable_col -  the column name with the dependent variable
-    other_covariates - list of covariate names - in the current set-up first is categorical i.e. gender and second continous i.e. age_at_visit
-    """
 
     print("\n" + "="*70)
     print(f"PERFORMING ANALYSIS OF {variable_col.upper()}")
@@ -47,7 +38,8 @@ def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=No
     print("TRAJECTORIES")
     print("="*70+"\n")
     # Visualize trajectories
-
+# Get Tab10 color palette
+    colors = plt.cm.tab10(np.linspace(0, 1, len(df[group_col].unique())))
     fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(16, 10))
     axes=axes.flatten()
     
@@ -63,13 +55,38 @@ def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=No
     axes[0].set_ylabel(variable_col)
     axes[0].set_title(f'Individual Patient Trajectories for {variable_col}')
     axes[0].legend(df[group_col].unique())
+
+    # Mean trajectories with error bars + smooth fit
+    for n, group in enumerate(df[group_col].unique()):
+        group_summary = (
+            df[df[group_col] == group]
+            .groupby(visit_col)[variable_col]
+            .agg(['mean', 'sem'])
+            .dropna()
+        )
     
-    # Mean trajectories with error bars
-    for group in df[group_col].unique():
-        group_summary = df[df[group_col] == group].groupby(visit_col)[variable_col].agg(['mean', 'sem'])
-        axes[1].errorbar(group_summary.index, group_summary['mean'], 
-                        yerr=group_summary['sem'], marker='o', label=group, capsize=5)
+        x = group_summary.index
+        y = group_summary['mean']
+        color = colors[n]
     
+        # plot mean ± SEM
+        axes[1].errorbar(
+        x, y, 
+        yerr=group_summary['sem'],
+        marker='o', 
+        label=f'{group} (data)', 
+        capsize=5, 
+        linestyle='none',
+        alpha=0.3, 
+        color = color
+    )
+    
+        # --- OPTION 1: simple linear fit ---
+        slope, intercept, _, _, _ = linregress(x, y)
+        y_pred_linear = intercept + slope * np.array(x)
+        axes[1].plot(x, y_pred_linear, label=f'{group} (linear fit)', color = color)
+
+        
     axes[1].set_xlabel('Visit')
     axes[1].set_ylabel(variable_col)
     axes[1].set_title(f'Mean Trajectories by Group (±SEM) for {variable_col}')
