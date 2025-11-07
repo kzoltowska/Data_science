@@ -299,6 +299,8 @@ import itertools
 from joblib import Parallel, delayed
 import statsmodels.formula.api as smf
 from statsmodels.stats.multitest import multipletests
+import warnings
+from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
 # ------------------------------
 # 1. Load and preprocess data
@@ -357,13 +359,19 @@ def fit_pairwise(pathway):
             f"C(COHORT_curated):months_from_first_visit"
         )
         try:
-            model = smf.mixedlm(
-                formula,
-                data=df_sub,
-                groups=df_sub["participant_id_rnaseq"],
-                re_formula="~months_from_first_visit"
-            )
-            fit = model.fit(reml=False)
+            # ------------------------------
+            # Suppress warnings during fitting
+            # ------------------------------
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ConvergenceWarning)
+                warnings.simplefilter("ignore", RuntimeWarning)
+                model = smf.mixedlm(
+                    formula,
+                    data=df_sub,
+                    groups=df_sub["participant_id_rnaseq"],
+                    re_formula="~months_from_first_visit"
+                )
+                fit = model.fit(reml=False)
 
             # The coefficient of g2 vs g1
             coef_name = f'C(subgroup_curated)[T.{g2}]'
@@ -421,6 +429,7 @@ df_results.to_csv(
     home+"PPMI_all/PPMI_curated_cut/Tabular_data/lmm_pathway_pairwise_CONTRASTS_PROD.csv",
     index=False
 )
+
 
     
 
