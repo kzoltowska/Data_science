@@ -1,3 +1,6 @@
+
+# General LMM using statsmodels
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -285,6 +288,140 @@ def lmm(df, group_col, visit_col, patient_col, variable_col, other_covariates=No
         
         print("\n" + "="*70)
         print("ANALYSIS COMPLETE")
+
+
+##############################
+# Pairwise lmm
+
+import pandas as pd
+import numpy as np
+import itertools
+from joblib import Parallel, delayed
+import statsmodels.formula.api as smf
+from statsmodels.stats.multitest import multipletests
+
+# ------------------------------
+# 1. Load and preprocess data
+# ------------------------------
+counts = pd.read_csv(home+"PPMI_all/PPMI_curated_cut/Tabular_data/gsva/gsva_results_ppmi_all.csv", index_col=0)
+metadata = pd.read_csv(home+"PPMI_all/PPMI_curated_cut/Tabular_data/metadata_hemat_rnaseq.csv")
+
+# Keep only relevant columns
+metadata = metadata.loc[:, [
+    "COHORT_curated","subgroup_curated","participant_id_rnaseq",
+    "visit_month_rnaseq", "months_from_first_visit", "SEX_curated",
+    "sample_id_rnaseq", "age_at_visit_curated", "Neutrophils (%)_hematology"
+]].dropna()
+
+metadata = metadata.rename({"Neutrophils (%)_hematology":"Neutrophils_perc"}, axis=1)
+metadata.set_index("sample_id_rnaseq", drop=False, inplace=True)
+
+# Filter cohorts
+metadata = metadata.loc[metadata.COHORT_curated.isin(["HC", "PROD"]), :]
+metadata["subgroup_curated"] = metadata["subgroup_curated"].replace({"Healthy Control":"CTRL"})
+
+# Remove unwanted subgroups
+metadata = metadata.loc[~metadata["subgroup_curated"].isin([
+    "GBA + RBD","PRKN + RBD","LRRK2 + VPS35","PARK7 + RBD",
+    "LRRK2 + PINK1","PRKN","PINK1","GBA"
+]), :].dropna()
+
+# Subset counts
+counts = counts.loc[:, metadata["sample_id_rnaseq"].to_list()]
+counts = counts.T
+
+# Sanitize pathway names
+counts.columns = counts.columns.str.replace(r"[^0-9a-zA-Z_]", "_", regex=True)
+
+# Merge metadata and counts
+merged = metadata.merge(counts, left_index=True, right_index=True)
+
+# Convert categorical columns
+categorical_cols = ["participant_id_rnaseq", "subgroup_curated", "SEX_curated"]
+merged[categorical_cols] = merged[categorical_cols].astype("category")
+
+# ------------------------------
+# 2. Define pairwise LMM function
+# ------------------------------
+def fit_pairwise(pathway):
+    groups = merged['subgroup_curated'].cat.categories.tolist()
+    results_list = []
+
+    for g1, g2 in itertools.combinations(groups, 2):
+        df_sub = merged[merged['subgroup_curated'].isin([g1, g2])].copy()
+        df_sub['subgroup_curated'] = df_sub['subgroup_curated'].cat.remove_unused_categories()
+        
+        formula = (
+            f"{pathway} ~ C(subgroup_curated) + months_from_first_visit + "
+            f"age_at_visit_curated + C(SEX_curated) + Neutrophils_perc + "
+            f"C(COHORT_curated):months_from_first_visit"
+        )
+        try:
+            model = smf.mixedlm(
+                formula,
+                data=df_sub,
+                groups=df_sub["participant_id_rnaseq"],
+                re_formula="~months_from_first_visit"
+            )
+            fit = model.fit(reml=False)
+
+            # The coefficient of g2 vs g1
+            coef_name = f'C(subgroup_curated)[T.{g2}]'
+            coef = fit.params.get(coef_name, np.nan)
+            pval = fit.pvalues.get(coef_name, np.nan)
+
+            results_list.append({
+                "pathway": pathway,
+                "contrast": f"{g1} vs {g2}",
+                "logFC": coef,
+                "pval": pval
+            })
+        except Exception as e:
+            print(f"Failed to fit {pathway} ({g1} vs {g2}): {e}")
+            results_list.append({
+                "pathway": pathway,
+                "contrast": f"{g1} vs {g2}",
+                "logFC": np.nan,
+                "pval": np.nan
+            })
+    return results_list
+
+# ------------------------------
+# 3. Parallel execution across pathways
+# ------------------------------
+n_jobs = -1  # use all cores
+results_nested = Parallel(n_jobs=n_jobs, verbose=10)(
+    delayed(fit_pairwise)(pathway) for pathway in counts.columns
+)
+
+# Flatten nested lists
+results = [r for sublist in results_nested for r in sublist]
+
+# ------------------------------
+# 4. Create results DataFrame
+# ------------------------------
+df_results = pd.DataFrame(results)
+
+# ------------------------------
+# 5. NaN-safe FDR adjustment
+# ------------------------------
+pvals = df_results['pval'].values
+padj = np.full_like(pvals, np.nan, dtype=np.float64)  # initialize with NaN
+valid_idx = ~np.isnan(pvals)
+padj[valid_idx] = multipletests(pvals[valid_idx], method='fdr_bh')[1]
+df_results['padj'] = padj
+
+# ------------------------------
+# 6. Sort, display, save
+# ------------------------------
+df_results = df_results.sort_values("padj")
+display(df_results)
+
+df_results.to_csv(
+    home+"PPMI_all/PPMI_curated_cut/Tabular_data/lmm_pathway_pairwise_CONTRASTS_PROD.csv",
+    index=False
+)
+
     
 
    
