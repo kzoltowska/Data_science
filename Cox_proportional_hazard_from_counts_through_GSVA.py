@@ -4,6 +4,18 @@
 # Xt - normalised log2 count data; y - structured array with status and time to conversion; meta - tabular metadata with covariates used in the linear model, 
 # path to gmt file needed for GSVA and number of features to select in the linear model statistical analysis
 
+def normalise(counts_df):
+    dds = DeseqDataSet(
+    counts=counts_df,
+    metadata=pd.DataFrame({"subject":counts_df.index}, index=counts_df.index),
+    design="~1",
+    refit_cooks=True,
+    inference=inference,
+    )
+    dds.fit_size_factors()
+    counts_normed=pd.DataFrame(dds.layers["normed_counts"].T, index=dds.var_names, columns=dds.obs_names).apply(lambda x: np.log2(x+1))
+    return counts_normed
+
 def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     # Set style
     sns.set_style("whitegrid")
@@ -18,7 +30,7 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     # Extract event indicator for stratification
     event = y["Status"]
     
-    # Split data
+    # Split data 70-30
     count_train, count_test, y_train, y_test = train_test_split(
         Xt, y, 
         test_size=0.25, 
@@ -37,32 +49,41 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     print("\n" + "="*80)
     print("2. FINAL MODEL FEATURE SELECTION AND TRAINING")
     print("="*80)
-
+    #display(count_train)
+    # normalise the data with deseq2 
+    print(count_train.shape)
+    print(count_test.shape)
+    count_train=normalise(count_train).T
+    count_test=normalise(count_test).T
+    print(count_train.shape)
+    print(count_test.shape)
     # Feature selection 
     selection_pvals = []
 
-    #running gsva seperately on train and test counts
+    #running gsva seperately on train and test counts    
     es = gp.gsva(data=count_train.T,
                          gene_sets=path_gmt,
                          kcdf="Gaussian", 
-                        outdir=None)
+                         outdir=None)
     X_train=es.res2d.pivot(index='Term', columns='Name', values='ES').T.astype(float)
     
     es = gp.gsva(data=count_test.T,
                          gene_sets=path_gmt,
                          kcdf="Gaussian", 
-                        outdir=None)
+                         outdir=None)
     X_test=es.res2d.pivot(index='Term', columns='Name', values='ES').T.astype(float)
     X_train.columns=[col.replace(" ","_").replace("-","_").replace("(","_").replace(")","_").replace("&","_").replace(",","_").replace("/","_").replace(".","_") for col in X_train.columns]
     X_test.columns=[col.replace(" ","_").replace("-","_").replace("(","_").replace(")","_").replace("&","_").replace(",","_").replace("/","_").replace(".","_") for col in X_test.columns]
+    print(X_train.shape, X_test.shape)
     #display(X_train)
     #display(X_test)
     
     # Build dataframe for statsmodels
     selection_df=X_train.merge(meta, right_index=True, left_index=True)
     #print(selection_df.columns.to_list())
+    # perform analysis to get important features 
     for feature in X_train.columns:
-        formula =  f"{feature} ~ C(Status) + age_sample_recalculated_scaled + C(gender) + Neutrophil_scaled"
+        formula =  f"{feature} ~ C(Status)+C(gender)+age_sample_recalculated_scaled+Neutrophil_scaled+PCT_CHIMERAS_qcs_scaled+NK_cell_scaled+MEAN_ALIGNED_READ_LENGTH_qcs_scaled+Monocyte_scaled+disease_duration_diag_closest_recalculated_scaled"
         #print(formula)
         #try:
         model = smf.ols(formula, data=selection_df).fit()
@@ -108,10 +129,9 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     print(f"After removing correlated and low variance features: {X_train_selected.shape[1]} features")
     
     # Fit Cox model with standardization
-    final_model = make_pipeline(
-        StandardScaler(),
-        CoxPHSurvivalAnalysis()
-    )
+    final_model = make_pipeline(StandardScaler(),CoxPHSurvivalAnalysis())
+    print(X_train_selected.shape, y_train.shape)
+    
     final_model.fit(X_train_selected, y_train)
     
     # Extract coefficients
@@ -159,15 +179,14 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     
     # Training C-index
     train_risk = final_model.predict(X_train_selected)
-    train_c_index = concordance_index_censored(
-        y_train['Status'], y_train['Time'], train_risk
-    )[0]
+    train_c_index_censored = concordance_index_censored(y_train['Status'], y_train['Time'], train_risk)[0]
+    
+
     
     # Test C-index
     test_risk = final_model.predict(X_test_selected)
-    test_c_index = concordance_index_censored(
-        y_test['Status'], y_test['Time'], test_risk
-    )[0]
+    test_c_index_censored = concordance_index_censored(y_test['Status'], y_test['Time'], test_risk)[0]
+    c_index_ipcw = concordance_index_ipcw(y_train, y_test, test_risk)
     
     # Cross-validated C-index AND coefficient tracking
     cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
@@ -178,16 +197,18 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     for i, (tr_idx, val_idx) in enumerate(cv.split(Xt, y["Status"]), 1):
         X_tr = Xt.iloc[tr_idx]
         X_val = Xt.iloc[val_idx]
+        X_tr=normalise(X_tr).T
+        X_val=normalise(X_val).T
         es = gp.gsva(data=X_tr.T,
                          gene_sets=path_gmt,
                          kcdf="Gaussian", 
-                        outdir=None)
+                         outdir=None)
         X_tr=es.res2d.pivot(index='Term', columns='Name', values='ES').T.astype(float)
     
         es = gp.gsva(data=X_val.T,
                          gene_sets=path_gmt,
                          kcdf="Gaussian", 
-                        outdir=None)
+                         outdir=None)
         X_val=es.res2d.pivot(index='Term', columns='Name', values='ES').T.astype(float)
         X_tr.columns=[col.replace(" ","_").replace("-","_").replace("(","_").replace(")","_").replace("&","_").replace(",","_").replace("/","_") for col in X_tr.columns]
         X_val.columns=[col.replace(" ","_").replace("-","_").replace("(","_").replace(")","_").replace("&","_").replace(",","_").replace("/","_") for col in X_val.columns]
@@ -201,8 +222,7 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
         final_model.fit(X_tr, y_tr)
         val_risk = final_model.predict(X_val)
     
-        c_index = concordance_index_censored(
-            y_val["Status"], y_val["Time"], val_risk)[0]
+        c_index = concordance_index_censored(y_val["Status"], y_val["Time"], val_risk)[0]
     
         # Extract coefficients from this fold
         fold_coef = final_model.named_steps['coxphsurvivalanalysis'].coef_
@@ -216,8 +236,9 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     
     print(f"CV C-index: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
     
-    print(f"\nTraining C-index: {train_c_index:.4f}")
-    print(f"Test C-index: {test_c_index:.4f}")
+    print(f"\nTraining C-index: {train_c_index_censored:.4f}")
+    print(f"Test C-index: {test_c_index_censored:.4f}")
+    print(f"C-index IPCW: {c_index_ipcw}")
     print(f"Cross-validated C-index: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
     print(f"CV scores: {cv_scores}")
 
@@ -258,8 +279,7 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     colors = ['red' if c > 0 else 'blue' for c in sorted_mean]
     
     # Plot bars with error bars
-    ax.barh(y_pos, sorted_mean, xerr=sorted_std, color=colors, alpha=0.6, 
-            capsize=5, error_kw={'linewidth': 2, 'elinewidth': 2})
+    ax.barh(y_pos, sorted_mean, xerr=sorted_std, color=colors, alpha=0.6, capsize=5, error_kw={'linewidth': 2, 'elinewidth': 2})
     
     ax.set_yticks(y_pos)
     ax.set_yticklabels([f.replace('REACTOME_', '').replace('WP_', '').replace('GO_BP_', '') 
@@ -280,17 +300,13 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
         fold_coefs = cv_coefficients[:, feature_idx]
         
         # Plot individual fold coefficients
-        ax.scatter([i]*len(fold_coefs), fold_coefs, alpha=0.6, s=100, 
-                   color='red' if coef_mean[feature_idx] > 0 else 'blue')
+        ax.scatter([i]*len(fold_coefs), fold_coefs, alpha=0.6, s=100, color='red' if coef_mean[feature_idx] > 0 else 'blue')
         
         # Plot mean
-        ax.scatter(i, coef_mean[feature_idx], s=200, marker='D', 
-                   color='darkred' if coef_mean[feature_idx] > 0 else 'darkblue',
-                   edgecolors='black', linewidths=2, zorder=5)
+        ax.scatter(i, coef_mean[feature_idx], s=200, marker='D', color='darkred' if coef_mean[feature_idx] > 0 else 'darkblue', edgecolors='black', linewidths=2, zorder=5)
     
     ax.set_xticks(range(len(sorted_features)))
-    ax.set_xticklabels([f.replace('REACTOME_', '').replace('WP_', '').replace('GO_BP_', '') 
-                     for f in sorted_features], rotation=45, ha='right', fontsize=10)
+    ax.set_xticklabels([f.replace('REACTOME_', '').replace('WP_', '').replace('GO_BP_', '') for f in sorted_features], rotation=45, ha='right', fontsize=10)
     ax.set_ylabel('Coefficient', fontsize=12)
     ax.set_title('Coefficient Values Across Individual CV Folds\n(Diamond = Mean, Circles = Individual Folds)', fontsize=14, fontweight='bold')
     ax.axhline(0, color='black', linestyle='--', linewidth=1)
@@ -303,8 +319,7 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     cv_coef = coef_stability_df.sort_values('CV_Coefficient', ascending=False)
     ax.barh(range(len(cv_coef)), cv_coef['CV_Coefficient'], alpha=0.7, color='orange')
     ax.set_yticks(range(len(cv_coef)))
-    ax.set_yticklabels([f.replace('REACTOME_', '').replace('WP_', '').replace('GO_BP_', '') 
-                         for f in cv_coef['Feature']], fontsize=10)
+    ax.set_yticklabels([f.replace('REACTOME_', '').replace('WP_', '').replace('GO_BP_', '') for f in cv_coef['Feature']], fontsize=10)
     ax.set_xlabel('Coefficient of Variation (Std/|Mean|)', fontsize=12)
     ax.set_title('Coefficient Stability (Lower = More Stable)', fontsize=14, fontweight='bold')
     ax.axvline(0.5, color='red', linestyle='--', linewidth=2, label='CV > 0.5 (Unstable)')
@@ -328,7 +343,7 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     es = gp.gsva(data=Xt.T,
                          gene_sets=path_gmt,
                          kcdf="Gaussian", 
-                        outdir=None)
+                         outdir=None)
     X_all=es.res2d.pivot(index='Term', columns='Name', values='ES').T.astype(float)
     X_all.columns=[col.replace(" ","_").replace("-","_").replace("(","_").replace(")","_").replace("&","_").replace(",","_").replace("/","_") for col in X_all.columns]
        
@@ -410,7 +425,7 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
     ax.set_xlabel('C-index')
     ax.set_title('Univariate C-index for Each Feature')
     ax.axvline(0.5, color='red', linestyle='--', linewidth=1, label='Random')
-    ax.axvline(test_c_index, color='green', linestyle='--', linewidth=1, label='Multivariate Model')
+    ax.axvline(test_c_index_censored, color='green', linestyle='--', linewidth=1, label='Multivariate Model')
     ax.legend()
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -456,10 +471,11 @@ def cox_ph_model(Xt,y, meta, path_gmt,feat_num=30):
 
     summary = f"""
     Model Performance:
-      - Training C-index: {train_c_index:.4f}
-      - Test C-index: {test_c_index:.4f}
+      - Training C-index: {train_c_index_censored:.4f}
+      - Test C-index: {test_c_index_censored:.4f}
       - CV C-index: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}
      
+    
     Risk Stratification:
       - Log-rank test p-value: {logrank_result.p_value:.4e}
       - Significant separation between risk groups: {'Yes' if logrank_result.p_value < 0.05 else 'No'}
